@@ -167,15 +167,15 @@ export default function PhoneViewer() {
   return (
     <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-2xl bg-gradient-to-b from-neutral-100 to-neutral-300 dark:from-neutral-800 dark:to-neutral-950">
       {preview3D ? (
-        <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 0.2, 3.4], fov: 35 }} gl={{ antialias: true, preserveDrawingBuffer: false }}>
+        <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 0.1, 5.2], fov: 35 }} gl={{ antialias: true, preserveDrawingBuffer: false }}>
           <Suspense fallback={<Loader />}>
             {/* studio lighting: HDRI-style environment + key light with soft shadow */}
-            <Environment preset="studio" />
+            <Environment preset="studio" environmentIntensity={0.7} />
             <directionalLight position={[3, 4, 3]} intensity={1.1} castShadow shadow-mapSize={[1024, 1024]} />
             <PhoneWithCase />
             <ContactShadows position={[0, -1.05, 0]} opacity={0.45} scale={6} blur={2.6} far={2} />
           </Suspense>
-          <OrbitControls enablePan enableZoom enableDamping minDistance={1.8} maxDistance={7} />
+          <OrbitControls enablePan enableZoom enableDamping minDistance={2.5} maxDistance={9} />
         </Canvas>
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-neutral-500">3D preview is off</div>
