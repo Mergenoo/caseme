@@ -88,15 +88,22 @@ function PhoneWithCase() {
   };
   const bump = finishId === "leather";
 
-  // Camera module layout (top-left of the back).
-  const camX = -cw / 2 + 0.3, camY = ch / 2 - 0.3;
-  const lenses = phone.camera === "dual" ? [[0, 0.1], [0, -0.1]]
-    : phone.camera === "triple" ? [[-0.09, 0.09], [0.09, 0.09], [0, -0.09]]
-    : [[-0.1, 0.18], [-0.1, 0.0], [-0.1, -0.18], [0.1, 0.0]];
-  const camR = phone.camera === "dual" ? 0.17 : 0.24;
+  // Camera module: rounded-square island inset from the top-left corner of the back.
+  const modW = phone.camera === "dual" ? 0.3 : phone.camera === "triple" ? 0.38 : 0.28;
+  const modH = phone.camera === "dual" ? 0.4 : phone.camera === "triple" ? 0.38 : 0.62;
+  const inset = cs.thickness + 0.05;
+  const camX = -cw / 2 + inset + modW / 2, camY = ch / 2 - inset - modH / 2;
+  const lensR = phone.camera === "quad" ? 0.062 : 0.075;
+  const lenses: [number, number][] = phone.camera === "dual" ? [[0, 0.09], [0, -0.09]]
+    : phone.camera === "triple" ? [[-0.085, 0.085], [0.085, 0.085], [-0.085, -0.085]]
+    : [[0, 0.2], [0, 0.0], [0, -0.2]];
+  const modGeo = useMemo(
+    () => new THREE.ExtrudeGeometry(roundedRect(modW, modH, 0.07), { depth: 0.03, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 4, curveSegments: 16 }),
+    [modW, modH],
+  );
 
   // Gentle idle float so the model feels alive; OrbitControls still works on top.
-  useFrame((s) => { s.scene.userData.t = s.clock.elapsedTime; });
+  
 
   return (
     <group position={[0, 0, -cd / 2]}>
@@ -121,18 +128,22 @@ function PhoneWithCase() {
         />
       </mesh>
 
-      {/* camera bump */}
-      <group position={[camX, camY, cd + 0.02]}>
-        <mesh position={[0, 0, 0.02]} castShadow>
-          <boxGeometry args={[camR * 2 + 0.08, (phone.camera === "dual" ? 0.5 : phone.camera === "quad" ? 0.58 : 0.5), 0.04]} />
-          <meshStandardMaterial color="#0d0d10" roughness={0.3} metalness={0.5} />
+      {/* camera island: rounded glass-black plate + ringed lenses + flash */}
+      <group position={[camX, camY, cd + 0.016]}>
+        <mesh geometry={modGeo} castShadow>
+          <meshPhysicalMaterial color="#15151a" roughness={0.25} metalness={0.4} clearcoat={1} />
         </mesh>
         {lenses.map(([x, y], i) => (
-          <group key={i} position={[x, y, 0.05]}>
-            <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.065, 0.065, 0.03, 32]} /><meshStandardMaterial color="#2a2a30" metalness={0.9} roughness={0.2} /></mesh>
-            <mesh position={[0, 0, 0.017]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.045, 0.045, 0.005, 32]} /><meshPhysicalMaterial color="#0a1530" metalness={0.3} roughness={0.05} clearcoat={1} /></mesh>
+          <group key={i} position={[x, y, 0.046]} rotation={[Math.PI / 2, 0, 0]}>
+            <mesh><cylinderGeometry args={[lensR, lensR, 0.03, 40]} /><meshStandardMaterial color="#8d8d96" metalness={1} roughness={0.25} /></mesh>
+            <mesh position={[0, 0.012, 0]}><cylinderGeometry args={[lensR * 0.78, lensR * 0.78, 0.012, 40]} /><meshStandardMaterial color="#0b0b0e" metalness={0.6} roughness={0.3} /></mesh>
+            <mesh position={[0, 0.019, 0]}><cylinderGeometry args={[lensR * 0.5, lensR * 0.5, 0.006, 32]} /><meshPhysicalMaterial color="#0a1840" metalness={0.2} roughness={0.05} clearcoat={1} /></mesh>
           </group>
         ))}
+        {/* flash */}
+        <mesh position={[phone.camera === "triple" ? 0.085 : modW / 2 - 0.06, phone.camera === "triple" ? -0.085 : modH / 2 - 0.06, 0.044]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.022, 0.022, 0.01, 24]} /><meshStandardMaterial color="#f4ecd0" emissive="#f4ecd0" emissiveIntensity={0.2} />
+        </mesh>
       </group>
 
       {/* type-specific details */}
