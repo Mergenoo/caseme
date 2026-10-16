@@ -96,6 +96,44 @@ function PhoneWithCase() {
   useEffect(() => { if (texture) texture.needsUpdate = true; }, [texture, textureVersion]);
   useEffect(() => () => texture?.dispose(), [texture]);
 
+  // Front display (visible when you orbit round to the front): bezel + lock screen.
+  const screenW = phone.width - 0.05, screenH = phone.height - 0.05;
+  const bezelGeo = useMemo(() => {
+    const g = new THREE.ShapeGeometry(roundedRect(phone.width - 0.02, phone.height - 0.02, phone.radius - 0.01), 24);
+    return g;
+  }, [phone]);
+  const screenGeo = useMemo(() => {
+    const g = new THREE.ShapeGeometry(roundedRect(screenW, screenH, phone.radius - 0.03), 24);
+    const pos = g.attributes.position;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = 1 - (pos.getX(i) / screenW + 0.5); // mirrored: plane is turned to face -Z
+      uv[i * 2 + 1] = pos.getY(i) / screenH + 0.5;
+    }
+    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    return g;
+  }, [phone, screenW, screenH]);
+  const screenTex = useMemo(() => {
+    const W = 512, H = Math.round((512 * screenH) / screenW);
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d")!;
+    const bg = g.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, "#1e1b4b"); bg.addColorStop(0.5, "#7c5cff"); bg.addColorStop(1, "#ff7ab6");
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const glow = g.createRadialGradient(W * 0.7, H * 0.75, 10, W * 0.7, H * 0.75, W * 0.7);
+    glow.addColorStop(0, "rgba(255,255,255,0.35)"); glow.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = glow; g.fillRect(0, 0, W, H);
+    g.fillStyle = "#fff"; g.textAlign = "center";
+    g.font = "500 28px Inter, Arial"; g.fillText("Friday, 16 October", W / 2, H * 0.2);
+    g.font = "700 150px Inter, Arial"; g.fillText("9:41", W / 2, H * 0.2 + 150);
+    g.fillStyle = "rgba(255,255,255,0.9)"; g.font = "700 30px Inter, Arial"; g.fillText("CaseMe", W / 2, H * 0.92);
+    // dynamic island
+    g.fillStyle = "#000"; g.beginPath(); g.roundRect(W / 2 - 62, 22, 124, 36, 18); g.fill();
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+    return t;
+  }, [screenW, screenH]);
+  useEffect(() => () => screenTex.dispose(), [screenTex]);
+
   const clear = finishId === "transparent";
   const matProps = {
     roughness: fin.roughness, metalness: fin.metalness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.1,
@@ -126,6 +164,14 @@ function PhoneWithCase() {
         <extrudeGeometry args={[roundedRect(phone.width, phone.height, phone.radius), { depth: phone.depth, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 4, curveSegments: 24 }]} />
         <meshPhysicalMaterial color="#1b1b1f" roughness={0.35} metalness={0.8} />
       </mesh>
+
+      {/* front display: black bezel + glowing lock screen, facing -Z */}
+      <group position={[0, 0, -0.02]} rotation={[0, Math.PI, 0]}>
+        <mesh geometry={bezelGeo}><meshStandardMaterial color="#050507" roughness={0.3} /></mesh>
+        <mesh geometry={screenGeo} position={[0, 0, 0.002]}>
+          <meshBasicMaterial map={screenTex} toneMapped={false} />
+        </mesh>
+      </group>
 
       {/* case shell in the base colour (with grain for non-glossy finishes) */}
       <mesh geometry={shellGeo} castShadow receiveShadow>
