@@ -7,7 +7,7 @@ interface SimState {
   caseId: CaseTypeId;
   finishId: FinishId;
   caseColor: string;
-  canvasBg: string;
+  canvasBg: string | null;
   preview3D: boolean;
   cart: number;
   savedAt: number | null;
@@ -25,7 +25,7 @@ interface SimState {
   setCase: (id: CaseTypeId) => void;
   setFinish: (id: FinishId) => void;
   setCaseColor: (c: string) => void;
-  setCanvasBg: (c: string) => void;
+  setCanvasBg: (c: string | null) => void;
   togglePreview: () => void;
   bumpTexture: () => void;
   registerActions: (a: SimState["actions"]) => void;
@@ -38,7 +38,7 @@ export const useSim = create<SimState>((set) => ({
   caseId: "silicone",
   finishId: "matte",
   caseColor: "#7c5cff",
-  canvasBg: "#ffffff",
+  canvasBg: null,
   preview3D: true,
   cart: 0,
   savedAt: null,

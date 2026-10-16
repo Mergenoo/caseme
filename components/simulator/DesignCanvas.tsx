@@ -32,8 +32,9 @@ export default function DesignCanvas() {
     const url = URL.createObjectURL(file);
     try {
       const img = await FabricImage.fromURL(url);
-      // Fit the image to cover ~80% of the canvas width, centered.
-      const scale = Math.min((CANVAS_W * 0.8) / img.width!, (CANVAS_H * 0.8) / img.height!);
+      // Full-bleed by default: scale to COVER the canvas so the photo wraps the whole case
+      // (including edges). Users can shrink it afterwards.
+      const scale = Math.max(CANVAS_W / img.width!, CANVAS_H / img.height!);
       img.set({ scaleX: scale, scaleY: scale, left: CANVAS_W / 2, top: CANVAS_H / 2, originX: "center", originY: "center" });
       c.add(img);
       c.setActiveObject(img);
@@ -76,7 +77,7 @@ export default function DesignCanvas() {
   useEffect(() => {
     if (!elRef.current) return;
     const c = new Canvas(elRef.current, {
-      width: CANVAS_W, height: CANVAS_H, backgroundColor: useSim.getState().canvasBg,
+      width: CANVAS_W, height: CANVAS_H, backgroundColor: useSim.getState().canvasBg ?? "",
       preserveObjectStacking: true,
     });
     fabricRef.current = c;
@@ -119,7 +120,7 @@ export default function DesignCanvas() {
   useEffect(() => {
     const c = fabricRef.current;
     if (!c) return;
-    c.backgroundColor = canvasBg;
+    c.backgroundColor = canvasBg ?? "";
     c.requestRenderAll();
   }, [canvasBg]);
 
@@ -167,7 +168,7 @@ export default function DesignCanvas() {
 
       <div>
         <span className="label">Background</span>
-        <ColorRow value={canvasBg} onChange={setCanvasBg} />
+        <ColorRow value={canvasBg ?? ""} onChange={setCanvasBg} allowNone />
       </div>
 
       {isText && t && (
@@ -189,9 +190,12 @@ export default function DesignCanvas() {
   );
 }
 
-function ColorRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ColorRow({ value, onChange, allowNone }: { value: string; onChange: (v: any) => void; allowNone?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {allowNone && (
+        <button onClick={() => onChange(null)} className={`rounded-full border px-2.5 py-1 text-xs ${value === "" ? "border-brand bg-brand/10" : "border-neutral-300 dark:border-neutral-700"}`}>Case colour</button>
+      )}
       {SWATCHES.map((c) => (
         <button key={c} aria-label={c} onClick={() => onChange(c)} style={{ background: c }}
           className={`h-7 w-7 rounded-full border border-black/15 ${value.toLowerCase() === c ? "ring-2 ring-brand ring-offset-2 ring-offset-white dark:ring-offset-neutral-900" : ""}`} />

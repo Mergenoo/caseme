@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import { ContactShadows, Environment, Html, OrbitControls, useProgress } from "@react-three/drei";
 import * as THREE from "three";
 import { CASE_TYPES, FINISHES, PHONES } from "@/lib/catalog";
@@ -27,8 +27,8 @@ function Loader() {
 
 /**
  * The phone + case. Back of the phone faces +Z.
- * `printGeo` is a flat rounded-rect whose UVs are normalised to 0..1 across the
- * case back, so the Fabric canvas maps 1:1 onto the case.
+ * The shell uses back-projected UVs (0..1 across the case back) so the
+ * Fabric canvas maps 1:1 onto the back and wraps over the edges.
  */
 function PhoneWithCase() {
   const { phoneId, caseId, finishId, caseColor, textureVersion } = useSim();
@@ -49,18 +49,32 @@ function PhoneWithCase() {
     [cw, ch, cd, cr],
   );
 
-  // Printable back plate. UVs computed from vertex position → 0..1.
-  const printGeo = useMemo(() => {
-    const g = new THREE.ShapeGeometry(roundedRect(cw, ch, cr), 24);
-    const pos = g.attributes.position;
+  // Planar (back-projected) UVs for the WHOLE shell: back face, bevel and side walls.
+  // The artwork covers the back; the texture is CLAMPED so its edge pixels streak
+  // down the sides and read as the design wrapping around the case edge.
+  useMemo(() => {
+    const pos = shellGeo.attributes.position;
     const uv = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
       uv[i * 2] = pos.getX(i) / cw + 0.5;
-      uv[i * 2 + 1] = pos.getY(i) / ch + 0.5; // +y = top = canvas top (flipY)
+      uv[i * 2 + 1] = pos.getY(i) / ch + 0.5;
     }
-    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-    return g;
-  }, [cw, ch, cr]);
+    shellGeo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  }, [shellGeo, cw, ch]);
+
+  // Fine procedural grain for matte / leather / silicone surfaces (bump only).
+  const grain = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const g = c.getContext("2d")!;
+    const d = g.createImageData(128, 128);
+    for (let i = 0; i < d.data.length; i += 4) { const v = 90 + Math.random() * 90; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+    g.putImageData(d, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(10, 20);
+    return t;
+  }, []);
 
   /**
    * CanvasTexture mapping: wrap Fabric's rendered <canvas> in a texture.
@@ -73,6 +87,7 @@ function PhoneWithCase() {
     if (!src) return null;
     const t = new THREE.CanvasTexture(src);
     t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
     t.anisotropy = 8;
     return t;
     // textureVersion included so we pick up the source once Fabric has mounted
@@ -86,7 +101,6 @@ function PhoneWithCase() {
     roughness: fin.roughness, metalness: fin.metalness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.1,
     transparent: clear, opacity: fin.opacity,
   };
-  const bump = finishId === "leather";
 
   // Camera module: rounded-square island inset from the top-left corner of the back.
   const modW = phone.camera === "dual" ? 0.3 : phone.camera === "triple" ? 0.38 : 0.28;
@@ -113,20 +127,23 @@ function PhoneWithCase() {
         <meshPhysicalMaterial color="#1b1b1f" roughness={0.35} metalness={0.8} />
       </mesh>
 
-      {/* case shell */}
+      {/* case shell in the base colour (with grain for non-glossy finishes) */}
       <mesh geometry={shellGeo} castShadow receiveShadow>
-        <meshPhysicalMaterial color={caseColor} {...matProps} />
+        <meshPhysicalMaterial color={caseColor} {...matProps}
+          bumpMap={finishId === "glossy" || clear ? undefined : grain} bumpScale={finishId === "leather" ? 1.2 : 0.4} />
       </mesh>
 
-      {/* printed artwork on the back */}
-      <mesh geometry={printGeo} position={[0, 0, cd + 0.0155]}>
-        <meshPhysicalMaterial
-          map={texture ?? undefined} color="#ffffff" {...matProps}
-          // leather grain illusion: higher roughness on the printed layer
-          roughness={bump ? 0.75 : fin.roughness}
-          transparent={clear} opacity={clear ? 0.9 : 1}
-        />
-      </mesh>
+      {/* printed artwork: same geometry, transparent texture layer pulled forward
+          with polygonOffset so it wraps back + edges and shows the base colour
+          wherever the design canvas is empty */}
+      {texture && (
+        <mesh geometry={shellGeo}>
+          <meshPhysicalMaterial map={texture} transparent depthWrite={false}
+            polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2}
+            roughness={fin.roughness} metalness={0} clearcoat={fin.clearcoat} clearcoatRoughness={0.1}
+            opacity={clear ? 0.9 : 1} />
+        </mesh>
+      )}
 
       {/* camera island: rounded glass-black plate + ringed lenses + flash */}
       <group position={[camX, camY, cd + 0.016]}>
