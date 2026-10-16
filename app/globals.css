@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply bg-neutral-50 text-neutral-900 antialiased; }
+.dark body { @apply bg-neutral-950 text-neutral-100; }
+.card { @apply rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900; }
+.label { @apply mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500; }
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium transition active:scale-95; }
+.btn-primary { @apply bg-brand text-white hover:bg-brand-dark; }
+.btn-ghost { @apply border border-neutral-200 bg-white hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800; }

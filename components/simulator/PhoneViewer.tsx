@@ -1,0 +1,188 @@
+"use client";
+
+import { Suspense, useEffect, useMemo } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { ContactShadows, Environment, Html, OrbitControls, useProgress } from "@react-three/drei";
+import * as THREE from "three";
+import { CASE_TYPES, FINISHES, PHONES } from "@/lib/catalog";
+import { getCanvasSource } from "@/lib/canvasBridge";
+import { useSim } from "@/lib/store";
+
+/** Rounded-rectangle outline, centered at origin. */
+function roundedRect(w: number, h: number, r: number) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y); s.absarc(x + w - r, y + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(x + w, y + h - r); s.absarc(x + w - r, y + h - r, r, 0, Math.PI / 2, false);
+  s.lineTo(x + r, y + h); s.absarc(x + r, y + h - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(x, y + r); s.absarc(x + r, y + r, r, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+
+function Loader() {
+  const { progress } = useProgress();
+  return <Html center><div className="whitespace-nowrap rounded-full bg-black/70 px-3 py-1 text-xs text-white">Loading 3D… {progress.toFixed(0)}%</div></Html>;
+}
+
+/**
+ * The phone + case. Back of the phone faces +Z.
+ * `printGeo` is a flat rounded-rect whose UVs are normalised to 0..1 across the
+ * case back, so the Fabric canvas maps 1:1 onto the case.
+ */
+function PhoneWithCase() {
+  const { phoneId, caseId, finishId, caseColor, textureVersion } = useSim();
+  const phone = PHONES.find((p) => p.id === phoneId)!;
+  const cs = CASE_TYPES.find((c) => c.id === caseId)!;
+  const fin = FINISHES.find((f) => f.id === finishId)!;
+
+  const cw = phone.width + cs.thickness * 2;
+  const ch = phone.height + cs.thickness * 2;
+  const cd = phone.depth + cs.thickness + cs.bumper;
+  const cr = phone.radius + cs.thickness;
+
+  // Case shell: extruded rounded rect with soft bevel.
+  const shellGeo = useMemo(
+    () => new THREE.ExtrudeGeometry(roundedRect(cw, ch, cr), {
+      depth: cd, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 6, curveSegments: 24,
+    }),
+    [cw, ch, cd, cr],
+  );
+
+  // Printable back plate. UVs computed from vertex position → 0..1.
+  const printGeo = useMemo(() => {
+    const g = new THREE.ShapeGeometry(roundedRect(cw, ch, cr), 24);
+    const pos = g.attributes.position;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = pos.getX(i) / cw + 0.5;
+      uv[i * 2 + 1] = pos.getY(i) / ch + 0.5; // +y = top = canvas top (flipY)
+    }
+    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    return g;
+  }, [cw, ch, cr]);
+
+  /**
+   * CanvasTexture mapping: wrap Fabric's rendered <canvas> in a texture.
+   * three re-uploads the pixels to the GPU only when `needsUpdate` is set,
+   * which we do whenever the store's `textureVersion` changes (bumped by every
+   * Fabric `after:render`). Anisotropy keeps text crisp at oblique angles.
+   */
+  const texture = useMemo(() => {
+    const src = getCanvasSource();
+    if (!src) return null;
+    const t = new THREE.CanvasTexture(src);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+    // textureVersion included so we pick up the source once Fabric has mounted
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textureVersion === 0 ? 0 : 1]);
+  useEffect(() => { if (texture) texture.needsUpdate = true; }, [texture, textureVersion]);
+  useEffect(() => () => texture?.dispose(), [texture]);
+
+  const clear = finishId === "transparent";
+  const matProps = {
+    roughness: fin.roughness, metalness: fin.metalness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.1,
+    transparent: clear, opacity: fin.opacity,
+  };
+  const bump = finishId === "leather";
+
+  // Camera module layout (top-left of the back).
+  const camX = -cw / 2 + 0.3, camY = ch / 2 - 0.3;
+  const lenses = phone.camera === "dual" ? [[0, 0.1], [0, -0.1]]
+    : phone.camera === "triple" ? [[-0.09, 0.09], [0.09, 0.09], [0, -0.09]]
+    : [[-0.1, 0.18], [-0.1, 0.0], [-0.1, -0.18], [0.1, 0.0]];
+  const camR = phone.camera === "dual" ? 0.17 : 0.24;
+
+  // Gentle idle float so the model feels alive; OrbitControls still works on top.
+  useFrame((s) => { s.scene.userData.t = s.clock.elapsedTime; });
+
+  return (
+    <group position={[0, 0, -cd / 2]}>
+      {/* the phone itself (visible through transparent / wallet cases) */}
+      <mesh position={[0, 0, cs.thickness * 0.5]} castShadow>
+        <extrudeGeometry args={[roundedRect(phone.width, phone.height, phone.radius), { depth: phone.depth, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 4, curveSegments: 24 }]} />
+        <meshPhysicalMaterial color="#1b1b1f" roughness={0.35} metalness={0.8} />
+      </mesh>
+
+      {/* case shell */}
+      <mesh geometry={shellGeo} castShadow receiveShadow>
+        <meshPhysicalMaterial color={caseColor} {...matProps} />
+      </mesh>
+
+      {/* printed artwork on the back */}
+      <mesh geometry={printGeo} position={[0, 0, cd + 0.0155]}>
+        <meshPhysicalMaterial
+          map={texture ?? undefined} color="#ffffff" {...matProps}
+          // leather grain illusion: higher roughness on the printed layer
+          roughness={bump ? 0.75 : fin.roughness}
+          transparent={clear} opacity={clear ? 0.9 : 1}
+        />
+      </mesh>
+
+      {/* camera bump */}
+      <group position={[camX, camY, cd + 0.02]}>
+        <mesh position={[0, 0, 0.02]} castShadow>
+          <boxGeometry args={[camR * 2 + 0.08, (phone.camera === "dual" ? 0.5 : phone.camera === "quad" ? 0.58 : 0.5), 0.04]} />
+          <meshStandardMaterial color="#0d0d10" roughness={0.3} metalness={0.5} />
+        </mesh>
+        {lenses.map(([x, y], i) => (
+          <group key={i} position={[x, y, 0.05]}>
+            <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.065, 0.065, 0.03, 32]} /><meshStandardMaterial color="#2a2a30" metalness={0.9} roughness={0.2} /></mesh>
+            <mesh position={[0, 0, 0.017]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.045, 0.045, 0.005, 32]} /><meshPhysicalMaterial color="#0a1530" metalness={0.3} roughness={0.05} clearcoat={1} /></mesh>
+          </group>
+        ))}
+      </group>
+
+      {/* type-specific details */}
+      {caseId === "magsafe" && (
+        <mesh position={[0, -0.05, cd + 0.02]}>
+          <torusGeometry args={[0.27, 0.012, 16, 64]} />
+          <meshStandardMaterial color="#cfcfd6" metalness={0.9} roughness={0.25} />
+        </mesh>
+      )}
+      {caseId === "armor" && (
+        <>
+          {[[-1, 1], [1, 1], [-1, -1], [1, -1]].map(([sx, sy], i) => (
+            <mesh key={i} position={[sx * (cw / 2 - 0.05), sy * (ch / 2 - 0.05), cd * 0.55]}>
+              <sphereGeometry args={[0.07, 24, 24]} />
+              <meshStandardMaterial color="#1a1a1d" roughness={0.9} />
+            </mesh>
+          ))}
+        </>
+      )}
+      {caseId === "wallet" && (
+        <mesh position={[-cw / 2 - 0.012, 0, cd / 2]}>
+          <boxGeometry args={[0.03, ch * 0.96, cd + 0.03]} />
+          <meshStandardMaterial color={caseColor} roughness={0.7} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+export default function PhoneViewer() {
+  const preview3D = useSim((s) => s.preview3D);
+  return (
+    <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-2xl bg-gradient-to-b from-neutral-100 to-neutral-300 dark:from-neutral-800 dark:to-neutral-950">
+      {preview3D ? (
+        <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 0.2, 3.4], fov: 35 }} gl={{ antialias: true, preserveDrawingBuffer: false }}>
+          <Suspense fallback={<Loader />}>
+            {/* studio lighting: HDRI-style environment + key light with soft shadow */}
+            <Environment preset="studio" />
+            <directionalLight position={[3, 4, 3]} intensity={1.1} castShadow shadow-mapSize={[1024, 1024]} />
+            <PhoneWithCase />
+            <ContactShadows position={[0, -1.05, 0]} opacity={0.45} scale={6} blur={2.6} far={2} />
+          </Suspense>
+          <OrbitControls enablePan enableZoom enableDamping minDistance={1.8} maxDistance={7} />
+        </Canvas>
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-neutral-500">3D preview is off</div>
+      )}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-[11px] text-white">
+        Drag to rotate · Scroll to zoom · Right-drag to pan
+      </div>
+    </div>
+  );
+}
