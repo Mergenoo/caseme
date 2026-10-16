@@ -5,6 +5,21 @@ import { Canvas, FabricImage, FabricObject, IText } from "fabric";
 
 /** Smallest on-canvas size (px) an object may be scaled to, so it can always be grabbed again. */
 const MIN_SIZE = 48;
+
+/**
+ * Keep an object reachable: a small object must stay fully inside the canvas; a larger one
+ * may overflow but must still cover the canvas edges (never leave a gap or drift away).
+ * Objects outside the canvas can't be seen or grabbed, so we never allow that state.
+ */
+function constrain(o: FabricObject) {
+  const r = o.getBoundingRect();
+  let dx = 0, dy = 0;
+  if (r.width <= CANVAS_W) { if (r.left < 0) dx = -r.left; else if (r.left + r.width > CANVAS_W) dx = CANVAS_W - (r.left + r.width); }
+  else { if (r.left > 0) dx = -r.left; else if (r.left + r.width < CANVAS_W) dx = CANVAS_W - (r.left + r.width); }
+  if (r.height <= CANVAS_H) { if (r.top < 0) dy = -r.top; else if (r.top + r.height > CANVAS_H) dy = CANVAS_H - (r.top + r.height); }
+  else { if (r.top > 0) dy = -r.top; else if (r.top + r.height < CANVAS_H) dy = CANVAS_H - (r.top + r.height); }
+  if (dx || dy) { o.set({ left: o.left + dx, top: o.top + dy }); o.setCoords(); }
+}
 import { ImagePlus, Type, Trash2, Eraser, UploadCloud, Crosshair, Maximize, RotateCw, Layers } from "lucide-react";
 import { CANVAS_H, CANVAS_W, FONTS, SWATCHES } from "@/lib/catalog";
 import { setCanvasSource } from "@/lib/canvasBridge";
@@ -98,6 +113,9 @@ export default function DesignCanvas() {
 
     const sync = () => { setHasObjects(c.getObjects().length > 0); setLayers([...c.getObjects()]); bump(); };
     // Never let an object shrink below MIN_SIZE: it would become impossible to select again.
+    c.on("object:moving", (e) => constrain(e.target));
+    c.on("object:rotating", (e) => constrain(e.target));
+    c.on("object:modified", (e) => constrain(e.target));
     c.on("object:scaling", (e) => {
       const o = e.target;
       const w = o.width * o.scaleX, h = o.height * o.scaleY;
@@ -105,6 +123,7 @@ export default function DesignCanvas() {
         const k = Math.max(MIN_SIZE / o.width, MIN_SIZE / o.height);
         o.set({ scaleX: Math.max(o.scaleX, k), scaleY: Math.max(o.scaleY, k) });
       }
+      constrain(o);
     });
     c.on("after:render", bump); // every redraw → refresh 3D texture
     c.on("object:added", sync);
@@ -149,11 +168,11 @@ export default function DesignCanvas() {
   const sel = selected as FabricObject | null;
   const minScale = sel ? Math.max(MIN_SIZE / sel.width, MIN_SIZE / sel.height) : 0.1;
   const rerender = () => { fabricRef.current?.requestRenderAll(); force((n) => n + 1); };
-  const setScale = (v: number) => { sel?.set({ scaleX: v, scaleY: v }); sel?.setCoords(); rerender(); };
+  const setScale = (v: number) => { if (!sel) return; sel.set({ scaleX: v, scaleY: v }); sel.setCoords(); constrain(sel); rerender(); };
   const centerSel = () => { sel?.set({ left: CANVAS_W / 2, top: CANVAS_H / 2, originX: "center", originY: "center" }); sel?.setCoords(); rerender(); };
   // "Fill": scale up until the object covers the whole canvas (full-bleed print)
   const fillSel = () => { if (!sel) return; setScale(Math.max(CANVAS_W / sel.width, CANVAS_H / sel.height)); centerSel(); };
-  const rotateSel = () => { sel?.set({ angle: ((sel.angle ?? 0) + 90) % 360 }); sel?.setCoords(); rerender(); };
+  const rotateSel = () => { if (!sel) return; sel.set({ angle: ((sel.angle ?? 0) + 90) % 360 }); sel.setCoords(); constrain(sel); rerender(); };
   const pick = (o: FabricObject) => { const c = fabricRef.current; if (!c) return; c.setActiveObject(o); c.requestRenderAll(); setSelected(o); };
   const isText = selected instanceof IText;
   const setProp = (props: Record<string, unknown>) => {
