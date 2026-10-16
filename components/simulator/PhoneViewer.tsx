@@ -10,14 +10,20 @@ import { useSim } from "@/lib/store";
 
 /** Rounded-rectangle outline, centered at origin. */
 function roundedRect(w: number, h: number, r: number) {
-  const s = new THREE.Shape();
-  const x = -w / 2, y = -h / 2;
-  s.moveTo(x + r, y);
-  s.lineTo(x + w - r, y); s.absarc(x + w - r, y + r, r, -Math.PI / 2, 0, false);
-  s.lineTo(x + w, y + h - r); s.absarc(x + w - r, y + h - r, r, 0, Math.PI / 2, false);
-  s.lineTo(x + r, y + h); s.absarc(x + r, y + h - r, r, Math.PI / 2, Math.PI, false);
-  s.lineTo(x, y + r); s.absarc(x + r, y + r, r, Math.PI, Math.PI * 1.5, false);
-  return s;
+  // Build from sampled points (counter-clockwise, start mid-bottom-edge, no duplicated
+  // end point). Hand-chained absarc() calls left a seam/notch in the bevel.
+  const pts: THREE.Vector2[] = [new THREE.Vector2(0, -h / 2)];
+  const corner = (cx: number, cy: number, a0: number) => {
+    for (let i = 0; i <= 12; i++) {
+      const a = a0 + (i / 12) * (Math.PI / 2);
+      pts.push(new THREE.Vector2(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
+    }
+  };
+  corner(w / 2 - r, -h / 2 + r, -Math.PI / 2);
+  corner(w / 2 - r, h / 2 - r, 0);
+  corner(-w / 2 + r, h / 2 - r, Math.PI / 2);
+  corner(-w / 2 + r, -h / 2 + r, Math.PI);
+  return new THREE.Shape(pts);
 }
 
 function Loader() {
