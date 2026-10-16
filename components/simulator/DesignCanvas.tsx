@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Canvas, FabricImage, IText, type FabricObject } from "fabric";
-import { ImagePlus, Type, Trash2, Eraser, UploadCloud } from "lucide-react";
+import { Canvas, FabricImage, FabricObject, IText } from "fabric";
+
+/** Smallest on-canvas size (px) an object may be scaled to, so it can always be grabbed again. */
+const MIN_SIZE = 48;
+import { ImagePlus, Type, Trash2, Eraser, UploadCloud, Crosshair, Maximize, RotateCw, Layers } from "lucide-react";
 import { CANVAS_H, CANVAS_W, FONTS, SWATCHES } from "@/lib/catalog";
 import { setCanvasSource } from "@/lib/canvasBridge";
 import { useSim } from "@/lib/store";
@@ -20,6 +23,7 @@ export default function DesignCanvas() {
   const [drag, setDrag] = useState(false);
   const [hasObjects, setHasObjects] = useState(false);
   const [, force] = useState(0);
+  const [layers, setLayers] = useState<FabricObject[]>([]);
 
   const canvasBg = useSim((s) => s.canvasBg);
   const setCanvasBg = useSim((s) => s.setCanvasBg);
@@ -81,10 +85,27 @@ export default function DesignCanvas() {
       preserveObjectStacking: true,
     });
     fabricRef.current = c;
+    // Big, touch-friendly handles so even small images stay easy to grab.
+    FabricObject.ownDefaults.cornerSize = 14;
+    FabricObject.ownDefaults.touchCornerSize = 28;
+    FabricObject.ownDefaults.transparentCorners = false;
+    FabricObject.ownDefaults.cornerColor = "#7c5cff";
+    FabricObject.ownDefaults.cornerStyle = "circle";
+    FabricObject.ownDefaults.borderColor = "#7c5cff";
+    FabricObject.ownDefaults.padding = 4;
     // Publish the rendered (lower) canvas for the 3D texture.
     setCanvasSource(c.lowerCanvasEl);
 
-    const sync = () => { setHasObjects(c.getObjects().length > 0); bump(); };
+    const sync = () => { setHasObjects(c.getObjects().length > 0); setLayers([...c.getObjects()]); bump(); };
+    // Never let an object shrink below MIN_SIZE: it would become impossible to select again.
+    c.on("object:scaling", (e) => {
+      const o = e.target;
+      const w = o.width * o.scaleX, h = o.height * o.scaleY;
+      if (w < MIN_SIZE || h < MIN_SIZE) {
+        const k = Math.max(MIN_SIZE / o.width, MIN_SIZE / o.height);
+        o.set({ scaleX: Math.max(o.scaleX, k), scaleY: Math.max(o.scaleY, k) });
+      }
+    });
     c.on("after:render", bump); // every redraw → refresh 3D texture
     c.on("object:added", sync);
     c.on("object:removed", sync);
@@ -93,6 +114,7 @@ export default function DesignCanvas() {
     c.on("selection:updated", sel);
     c.on("selection:cleared", sel);
     c.on("object:modified", () => force((n) => n + 1));
+    c.on("object:scaling", () => force((n) => n + 1));
 
     registerActions({
       uploadImage, addText, clear, deleteSelected,
@@ -124,6 +146,15 @@ export default function DesignCanvas() {
     c.requestRenderAll();
   }, [canvasBg]);
 
+  const sel = selected as FabricObject | null;
+  const minScale = sel ? Math.max(MIN_SIZE / sel.width, MIN_SIZE / sel.height) : 0.1;
+  const rerender = () => { fabricRef.current?.requestRenderAll(); force((n) => n + 1); };
+  const setScale = (v: number) => { sel?.set({ scaleX: v, scaleY: v }); sel?.setCoords(); rerender(); };
+  const centerSel = () => { sel?.set({ left: CANVAS_W / 2, top: CANVAS_H / 2, originX: "center", originY: "center" }); sel?.setCoords(); rerender(); };
+  // "Fill": scale up until the object covers the whole canvas (full-bleed print)
+  const fillSel = () => { if (!sel) return; setScale(Math.max(CANVAS_W / sel.width, CANVAS_H / sel.height)); centerSel(); };
+  const rotateSel = () => { sel?.set({ angle: ((sel.angle ?? 0) + 90) % 360 }); sel?.setCoords(); rerender(); };
+  const pick = (o: FabricObject) => { const c = fabricRef.current; if (!c) return; c.setActiveObject(o); c.requestRenderAll(); setSelected(o); };
   const isText = selected instanceof IText;
   const setProp = (props: Record<string, unknown>) => {
     selected?.set(props);
@@ -133,7 +164,7 @@ export default function DesignCanvas() {
   const t = selected as IText | null;
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex flex-col gap-4">
       {/* Prominent upload zone */}
       <div
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
@@ -154,7 +185,7 @@ export default function DesignCanvas() {
       </div>
 
       {/* The 2D canvas */}
-      <div className="flex flex-1 items-center justify-center overflow-auto rounded-2xl bg-neutral-200/60 p-3 dark:bg-neutral-800/60">
+      <div className="flex shrink-0 items-center justify-center overflow-auto rounded-2xl bg-neutral-200/60 p-3 dark:bg-neutral-800/60">
         <div className="overflow-hidden rounded-[28px] shadow-lg ring-1 ring-black/10" style={{ width: CANVAS_W, height: CANVAS_H, maxWidth: "100%" }}>
           <canvas ref={elRef} />
         </div>
@@ -170,6 +201,36 @@ export default function DesignCanvas() {
         <span className="label">Background</span>
         <ColorRow value={canvasBg ?? ""} onChange={setCanvasBg} allowNone />
       </div>
+
+      {sel && (
+        <div className="card space-y-3 p-3">
+          <span className="label !mb-0">Selected item</span>
+          <label className="flex items-center gap-3 text-xs">
+            Scale
+            <input type="range" min={minScale} max={Math.max(minScale * 4, 4)} step={0.01} value={Math.max(sel.scaleX ?? 1, minScale)}
+              onChange={(e) => setScale(+e.target.value)} className="flex-1 accent-brand" />
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={centerSel} className="btn btn-ghost px-2 text-xs"><Crosshair className="h-3.5 w-3.5" /> Center</button>
+            <button onClick={fillSel} className="btn btn-ghost px-2 text-xs"><Maximize className="h-3.5 w-3.5" /> Fill</button>
+            <button onClick={rotateSel} className="btn btn-ghost px-2 text-xs"><RotateCw className="h-3.5 w-3.5" /> Rotate</button>
+          </div>
+        </div>
+      )}
+
+      {layers.length > 0 && (
+        <div>
+          <span className="label flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> Layers (tap to select)</span>
+          <div className="flex flex-wrap gap-2">
+            {layers.map((o, i) => (
+              <button key={i} onClick={() => pick(o)}
+                className={`rounded-lg border px-2.5 py-1 text-xs ${o === selected ? "border-brand bg-brand/10" : "border-neutral-300 dark:border-neutral-700"}`}>
+                {o instanceof IText ? `Text: ${(o.text ?? "").slice(0, 10)}` : `Image ${i + 1}`}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isText && t && (
         <div className="card space-y-3 p-3">
